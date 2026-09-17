@@ -1,0 +1,14 @@
+# ==========================================
+# HOW TO RUN THIS APPLICATION LOCALLY
+# ==========================================
+# 1. Open your terminal in this folder.
+# 2. Install the required packages by running:
+#    pip install -r requirements.txt
+#
+# 3. Start the Streamlit application by running:
+#    streamlit run app.py
+# ==========================================
+
+streamlit
+pandas
+openpyxl
