@@ -1,26 +1,45 @@
 import streamlit as st
 
-def get_arrow(cardinality):
-    """Returns a nicely formatted arrow string showing the cardinality direction."""
-    if cardinality == "One-to-Many (1:N)":
-        return "━━( 1 ➔ N )━━▶"
-    elif cardinality == "Many-to-One (N:1)":
-        return "━━( N ➔ 1 )━━▶"
-    elif cardinality == "One-to-One (1:1)":
-        return "━━( 1 ↔ 1 )━━▶"
-    elif cardinality == "Many-to-Many (N:M)":
-        return "━━( N ↔ M )━━▶"
+def get_directed_details(row, from_table, to_table):
+    """
+    Analyzes a relationship and returns the origin column, arrow, and target column.
+    Automatically reverses the cardinality arrow if the flow needs to go backwards 
+    to maintain a left-to-right visual chain.
+    """
+    if row['Table 1'] == from_table:
+        c_from = row['Table 1 Column']
+        c_to = row['Table 2 Column']
+        card = row['Cardinality']
     else:
-        return "━━━━▶"
+        c_from = row['Table 2 Column']
+        c_to = row['Table 1 Column']
+        
+        # Reverse the cardinality visually for a left-to-right flow
+        if row['Cardinality'] == "One-to-Many (1:N)":
+            card = "Many-to-One (N:1)"
+        elif row['Cardinality'] == "Many-to-One (N:1)":
+            card = "One-to-Many (1:N)"
+        else:
+            card = row['Cardinality']
+    
+    # Generate the exact arrow string
+    if card == "One-to-Many (1:N)":
+        arrow = "━━( 1 ➔ N )━━▶"
+    elif card == "Many-to-One (N:1)":
+        arrow = "━━( N ➔ 1 )━━▶"
+    elif card == "One-to-One (1:1)":
+        arrow = "━━( 1 ↔ 1 )━━▶"
+    elif card == "Many-to-Many (N:M)":
+        arrow = "━━( N ↔ M )━━▶"
+    else:
+        arrow = "━━━━▶"
+        
+    return c_from, arrow, c_to
 
 def format_rel(row):
-    """Formats a single row into standard Streamlit Markdown."""
-    t1, c1 = row['Table 1'], row['Table 1 Column']
-    t2, c2 = row['Table 2'], row['Table 2 Column']
-    arrow = get_arrow(row['Cardinality'])
-    
-    # We use native Markdown bolding and code blocks for perfect theme compatibility
-    return f"**{t1}**.`{c1}` &nbsp; {arrow} &nbsp; **{t2}**.`{c2}`"
+    """Formats a standard 1st-level direct relationship."""
+    c_from, arrow, c_to = get_directed_details(row, row['Table 1'], row['Table 2'])
+    return f"**{row['Table 1']}**.`{c_from}` &nbsp; {arrow} &nbsp; **{row['Table 2']}**.`{c_to}`"
 
 def show(filtered_df, schema, selected_tables):
     if filtered_df.empty:
@@ -43,7 +62,6 @@ def show(filtered_df, schema, selected_tables):
         if not direct_df.empty:
             st.markdown("#### Direct Relationships")
             for _, row in direct_df.iterrows():
-                # Native Green Alert Box
                 st.success(format_rel(row))
                 
         # 2. Indirect Relationships (2nd Level)
@@ -65,18 +83,29 @@ def show(filtered_df, schema, selected_tables):
                           ((indirect_df['Table 1'] == tC) & (indirect_df['Table 2'] == tB))
                 bc_rows = indirect_df[bc_mask]
                 
-                # Pair every A->C link with every C->B link
+                # Pair every A->C link with every C->B link to build the chain
                 for _, ac_row in ac_rows.iterrows():
                     for _, bc_row in bc_rows.iterrows():
-                        c1_str = format_rel(ac_row)
-                        c2_str = format_rel(bc_row)
                         
-                        # Native Blue Alert Box (the two spaces before \n force a line break in Markdown)
-                        st.info(f"{c1_str}  \n{c2_str}")
+                        # Get the flow from Table A -> Bridge Table C
+                        colA, arrow1, colC1 = get_directed_details(ac_row, tA, tC)
+                        # Get the flow from Bridge Table C -> Table B
+                        colC2, arrow2, colB = get_directed_details(bc_row, tC, tB)
+                        
+                        # If the bridge uses the exact same column for both links, merge them.
+                        # Otherwise, display both columns in the middle.
+                        if colC1 == colC2:
+                            bridge_str = f"**{tC}**.`{colC1}`"
+                        else:
+                            bridge_str = f"**{tC}**.(`{colC1}` & `{colC2}`)"
+                            
+                        # Build the final continuous string
+                        chain_str = f"**{tA}**.`{colA}` &nbsp; {arrow1} &nbsp; {bridge_str} &nbsp; {arrow2} &nbsp; **{tB}**.`{colB}`"
+                        
+                        st.info(chain_str)
                         
     else:
         # If the user selected 0 or 1 table, render everything as 1st Level (Green)
         st.markdown("#### All Relationships")
         for _, row in filtered_df.iterrows():
-            # Native Green Alert Box
             st.success(format_rel(row))
