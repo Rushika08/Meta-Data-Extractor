@@ -1,0 +1,54 @@
+# -----------------------------
+# Python 
+# -----------------------------
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# -----------------------------
+# Environments
+# -----------------------------
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# -----------------------------
+# Streamlit
+# -----------------------------
+# Ignore secrets but allow config.toml if you want to share UI settings
+.streamlit/secrets.toml
+
+# -----------------------------
+# Project Specific (Data Extractor)
+# -----------------------------
+# Ignore generated Excel downloads to prevent bloating the repository
+*.xlsx
+*.xls
+*.csv
+
+# Ignore local raw DBML files you might be testing with (optional)
+# *.dbml
+
+# -----------------------------
+# IDEs and Editors
+# -----------------------------
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# -----------------------------
+# OS Generated Files
+# -----------------------------
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
