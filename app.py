@@ -59,7 +59,15 @@ def parse_dbml_to_df(dbml_input):
                     "Target is PK?": t2_col_info['is_pk']
                 })
 
-    return pd.DataFrame(parsed_data)
+    df = pd.DataFrame(parsed_data)
+    
+    if not df.empty:
+        # Create Filter 1 (Tables) and Filter 2 (Columns) by sorting alphabetically and joining
+        # Sorting ensures that "A" and "B" always becomes "A-B", ignoring the original order.
+        df.insert(0, 'Filter 1 (Tables)', df.apply(lambda x: "-".join(sorted([x['Table 1'], x['Table 2']])), axis=1))
+        df.insert(1, 'Filter 2 (Columns)', df.apply(lambda x: "-".join(sorted([x['Table 1 Column'], x['Table 2 Column']])), axis=1))
+        
+    return df
 
 def to_excel_bytes(df):
     """Converts a pandas DataFrame to an Excel file in memory with formatting."""
@@ -129,7 +137,6 @@ if 'raw_df' in st.session_state:
     col1, col2, col3, col4 = st.columns(4)
     
     with col1:
-        # Added max_selections=2
         selected_tables = st.multiselect(
             "Filter by Table (Max 2):", 
             options=all_tables, 
@@ -146,16 +153,14 @@ if 'raw_df' in st.session_state:
     # Apply all selected filters
     filtered_df = df.copy()
     
-    # --- NEW TABLE FILTER LOGIC ---
+    # Table Filter Logic
     if len(selected_tables) == 1:
-        # If 1 table is selected, show anywhere it appears
         t1 = selected_tables[0]
         filtered_df = filtered_df[
             (filtered_df['Table 1'] == t1) | 
             (filtered_df['Table 2'] == t1)
         ]
     elif len(selected_tables) == 2:
-        # If 2 tables are selected, show only relationships between those two tables
         t1 = selected_tables[0]
         t2 = selected_tables[1]
         filtered_df = filtered_df[
@@ -163,7 +168,7 @@ if 'raw_df' in st.session_state:
             ((filtered_df['Table 1'] == t2) & (filtered_df['Table 2'] == t1))
         ]
         
-    # Standard OR condition for Columns
+    # Column Filter Logic
     if selected_columns:
         filtered_df = filtered_df[
             filtered_df['Table 1 Column'].isin(selected_columns) | 
