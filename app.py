@@ -83,18 +83,13 @@ def to_excel_bytes(df):
             column_letter = column[0].column_letter
             
             for cell in column:
-                # Bold the first row (headers)
                 if cell.row == 1:
                     cell.font = Font(bold=True)
-                
-                # Calculate the max length of data in the column
                 try:
                     if len(str(cell.value)) > max_length:
                         max_length = len(str(cell.value))
                 except:
                     pass
-            
-            # Set the column width (+2 for a little padding)
             worksheet.column_dimensions[column_letter].width = max_length + 2
 
     return output.getvalue()
@@ -116,33 +111,71 @@ if st.button("Process DBML", type="primary"):
         if df.empty:
             st.warning("No relationships (`Ref:` lines) were found.")
         else:
-            # Store dataframe in session state so filters don't erase it
             st.session_state['raw_df'] = df
             st.success(f"Successfully extracted {len(df)} relationships!")
 
-# 2. Filter and Display Section (Only shows if data has been processed)
+# 2. Filter and Display Section
 if 'raw_df' in st.session_state:
     st.divider()
     df = st.session_state['raw_df']
     
     st.subheader("🔎 Filter Relationships")
     
-    # Create dynamic columns for filters (4 filters per row)
-    filter_cols = st.columns(4)
-    active_filters = {}
-    
-    # Generate a multiselect dropdown for every column in the dataframe
-    for i, column in enumerate(df.columns):
-        with filter_cols[i % 4]:
-            unique_values = sorted(df[column].astype(str).unique())
-            selected = st.multiselect(f"Filter by {column}:", options=unique_values)
-            if selected:
-                active_filters[column] = selected
+    all_tables = sorted(set(df['Table 1']).union(set(df['Table 2'])))
+    all_columns = sorted(set(df['Table 1 Column']).union(set(df['Table 2 Column'])))
+    all_cards = sorted(df['Cardinality'].astype(str).unique())
+    all_pk_statuses = sorted(df['Target is PK?'].astype(str).unique())
 
-    # Apply all selected filters to a copied dataframe
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        # Added max_selections=2
+        selected_tables = st.multiselect(
+            "Filter by Table (Max 2):", 
+            options=all_tables, 
+            max_selections=2,
+            help="Select 1 table to see all its relations. Select 2 tables to see the specific relation between them."
+        )
+    with col2:
+        selected_columns = st.multiselect("Filter by Column (Any):", options=all_columns)
+    with col3:
+        selected_cards = st.multiselect("Filter by Cardinality:", options=all_cards)
+    with col4:
+        selected_pk = st.multiselect("Filter by Target is PK?:", options=all_pk_statuses)
+
+    # Apply all selected filters
     filtered_df = df.copy()
-    for col, selected_values in active_filters.items():
-        filtered_df = filtered_df[filtered_df[col].astype(str).isin(selected_values)]
+    
+    # --- NEW TABLE FILTER LOGIC ---
+    if len(selected_tables) == 1:
+        # If 1 table is selected, show anywhere it appears
+        t1 = selected_tables[0]
+        filtered_df = filtered_df[
+            (filtered_df['Table 1'] == t1) | 
+            (filtered_df['Table 2'] == t1)
+        ]
+    elif len(selected_tables) == 2:
+        # If 2 tables are selected, show only relationships between those two tables
+        t1 = selected_tables[0]
+        t2 = selected_tables[1]
+        filtered_df = filtered_df[
+            ((filtered_df['Table 1'] == t1) & (filtered_df['Table 2'] == t2)) | 
+            ((filtered_df['Table 1'] == t2) & (filtered_df['Table 2'] == t1))
+        ]
+        
+    # Standard OR condition for Columns
+    if selected_columns:
+        filtered_df = filtered_df[
+            filtered_df['Table 1 Column'].isin(selected_columns) | 
+            filtered_df['Table 2 Column'].isin(selected_columns)
+        ]
+        
+    # Standard AND conditions for the rest
+    if selected_cards:
+        filtered_df = filtered_df[filtered_df['Cardinality'].isin(selected_cards)]
+        
+    if selected_pk:
+        filtered_df = filtered_df[filtered_df['Target is PK?'].isin(selected_pk)]
         
     st.write(f"**Showing {len(filtered_df)} of {len(df)} relationships:**")
     
