@@ -1,7 +1,56 @@
 import streamlit as st
+import pandas as pd
 from utils import parse_dbml
 import page_extractor
 import page_visualizer
+
+def standardize_dataframe(df, t1, t2=None, bridges=None, schema=None):
+    """
+    Forces the dataframe to flow from the user's first selected table to the second.
+    It swaps Table 1 and Table 2, their columns, and their cardinality if they are backward.
+    """
+    standardized = []
+    for _, row in df.iterrows():
+        r = row.copy()
+        swap = False
+        
+        if t2 is None:
+            # Only 1 table selected: Ensure it is always in the Table 1 column
+            if r['Table 2'] == t1:
+                swap = True
+        else:
+            # 2 tables selected
+            # Direct: Force flow from t1 to t2
+            if r['Table 1'] == t2 and r['Table 2'] == t1:
+                swap = True
+            # Indirect: Force flow from t1 -> Bridge, and Bridge -> t2
+            elif bridges:
+                if r['Table 2'] == t1 and r['Table 1'] in bridges:
+                    swap = True  # Flips Bridge -> t1 into t1 -> Bridge
+                elif r['Table 1'] == t2 and r['Table 2'] in bridges:
+                    swap = True  # Flips t2 -> Bridge into Bridge -> t2
+                    
+        if swap:
+            # Swap Tables and Columns
+            r['Table 1'], r['Table 2'] = r['Table 2'], r['Table 1']
+            r['Table 1 Column'], r['Table 2 Column'] = r['Table 2 Column'], r['Table 1 Column']
+            
+            # Reverse Cardinality
+            if r['Cardinality'] == "One-to-Many (1:N)":
+                r['Cardinality'] = "Many-to-One (N:1)"
+            elif r['Cardinality'] == "Many-to-One (N:1)":
+                r['Cardinality'] = "One-to-Many (1:N)"
+            
+            # Recalculate PK status for the new target
+            if schema:
+                t_target = r['Table 2']
+                c_target = r['Table 2 Column']
+                is_pk = "Yes" if schema.get(t_target, {}).get(c_target, {}).get('is_pk') == 'Yes' else "No"
+                r['Target is PK?'] = is_pk
+
+        standardized.append(r)
+        
+    return pd.DataFrame(standardized) if standardized else pd.DataFrame(columns=df.columns)
 
 # App Config
 st.set_page_config(page_title="DBML Extractor & Visualizer", layout="wide")
@@ -37,12 +86,10 @@ if 'raw_df' in st.session_state:
 
     col1, col2, col3, col4 = st.columns(4)
     
-    # Initialize variables for 2nd-level logic
     show_indirect = False
     intermediate_tables = set()
     
     with col1:
-        # Silently enforce the 2-table limit in the background
         selected_tables = st.multiselect(
             "Filter by Table (Max 2):", 
             options=all_tables,
@@ -50,47 +97,36 @@ if 'raw_df' in st.session_state:
         )[:2]
         
         if len(selected_tables) == 2:
-            show_indirect = st.checkbox(
-                "Include 2nd-Level Connections", 
-                help="If these two tables don't connect directly, this will find and display the intermediate 'bridge' tables that connect them."
-            )
+            show_indirect = st.checkbox("Include 2nd-Level Connections")
             
             if show_indirect:
                 t1, t2 = selected_tables[0], selected_tables[1]
                 
-                # Pre-calculate raw bridge tables based on the full dataset
+                # Pre-calculate raw bridge tables
                 conn_t1 = set(df[df['Table 1'] == t1]['Table 2']).union(set(df[df['Table 2'] == t1]['Table 1']))
                 conn_t2 = set(df[df['Table 1'] == t2]['Table 2']).union(set(df[df['Table 2'] == t2]['Table 1']))
                 raw_bridges = conn_t1.intersection(conn_t2)
                 
-                # Reserve a spot in the UI for the specific bridges filter
                 specific_bridge_placeholder = st.empty()
-                
-                # Safely set default exclusion if 'systemuser' exists
                 default_excl = ["systemuser"] if "systemuser" in all_tables else []
                 
                 excluded_tables = st.multiselect(
                     "Exclude Bridge Tables:",
                     options=all_tables,
                     default=default_excl,
-                    help="ℹ️ Exclude noisy middle tables (like audit logs or system users) to prevent them from creating irrelevant 2nd-level connections."
+                    help="ℹ️ Exclude noisy middle tables to prevent irrelevant 2nd-level connections."
                 )
                 
-                # Calculate available bridges (Total Bridges minus Excluded Tables)
                 available_bridges = raw_bridges - set(excluded_tables)
                 
-                # Inject the Specific Bridge filter back into the reserved spot ABOVE the exclusion filter
                 with specific_bridge_placeholder:
                     specific_bridges = st.multiselect(
                         "Specific Bridge Table(s):",
                         options=sorted(list(available_bridges)),
-                        help="ℹ️ Optional: Focus on specific bridging tables. Only connections flowing through these exact tables will be shown."
+                        help="ℹ️ Optional: Focus on specific bridging tables."
                     )
                 
-                # Finalize the intermediate tables for the dataframe mask
-                intermediate_tables = available_bridges
-                if specific_bridges:
-                    intermediate_tables = set(specific_bridges)
+                intermediate_tables = set(specific_bridges) if specific_bridges else available_bridges
             
     with col2:
         selected_columns = st.multiselect("Filter by Column (Any):", options=all_columns)
@@ -105,11 +141,12 @@ if 'raw_df' in st.session_state:
     if len(selected_tables) == 1:
         t1 = selected_tables[0]
         filtered_df = filtered_df[(filtered_df['Table 1'] == t1) | (filtered_df['Table 2'] == t1)]
+        # Force standardize direction
+        filtered_df = standardize_dataframe(filtered_df, t1, schema=schema)
         
     elif len(selected_tables) == 2:
         t1, t2 = selected_tables[0], selected_tables[1]
         
-        # Always find direct relationships between T1 and T2
         direct_mask = ((filtered_df['Table 1'] == t1) & (filtered_df['Table 2'] == t2)) | \
                       ((filtered_df['Table 1'] == t2) & (filtered_df['Table 2'] == t1))
         
@@ -123,6 +160,9 @@ if 'raw_df' in st.session_state:
             filtered_df = filtered_df[direct_mask | indirect_mask]
         else:
             filtered_df = filtered_df[direct_mask]
+            
+        # Force standardize direction (t1 -> Bridge -> t2)
+        filtered_df = standardize_dataframe(filtered_df, t1, t2, bridges=intermediate_tables, schema=schema)
         
     # Standard filters applied afterward
     if selected_columns:

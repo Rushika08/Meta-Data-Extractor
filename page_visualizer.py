@@ -1,45 +1,58 @@
 import streamlit as st
 
-def get_directed_details(row, from_table, to_table):
-    """
-    Analyzes a relationship and returns the origin column, arrow, and target column.
-    Automatically reverses the cardinality arrow if the flow needs to go backwards 
-    to maintain a left-to-right visual chain.
-    """
-    if row['Table 1'] == from_table:
-        c_from = row['Table 1 Column']
-        c_to = row['Table 2 Column']
-        card = row['Cardinality']
-    else:
-        c_from = row['Table 2 Column']
-        c_to = row['Table 1 Column']
-        
-        # Reverse the cardinality visually for a left-to-right flow
-        if row['Cardinality'] == "One-to-Many (1:N)":
-            card = "Many-to-One (N:1)"
-        elif row['Cardinality'] == "Many-to-One (N:1)":
-            card = "One-to-Many (1:N)"
-        else:
-            card = row['Cardinality']
+def get_arrow_html(cardinality):
+    """Returns a nicely formatted, subtle gray arrow."""
+    if cardinality == "One-to-Many (1:N)": text = "━━( 1 ➔ N )━━▶"
+    elif cardinality == "Many-to-One (N:1)": text = "━━( N ➔ 1 )━━▶"
+    elif cardinality == "One-to-One (1:1)": text = "━━( 1 ↔ 1 )━━▶"
+    elif cardinality == "Many-to-Many (N:M)": text = "━━( N ↔ M )━━▶"
+    else: text = "━━━━▶"
     
-    # Generate the exact arrow string
-    if card == "One-to-Many (1:N)":
-        arrow = "━━( 1 ➔ N )━━▶"
-    elif card == "Many-to-One (N:1)":
-        arrow = "━━( N ➔ 1 )━━▶"
-    elif card == "One-to-One (1:1)":
-        arrow = "━━( 1 ↔ 1 )━━▶"
-    elif card == "Many-to-Many (N:M)":
-        arrow = "━━( N ↔ M )━━▶"
-    else:
-        arrow = "━━━━▶"
-        
-    return c_from, arrow, c_to
+    # Subdued gray color, slightly smaller, prevents text wrapping on the arrow
+    return f"<span style='color: #9ca3af; font-size: 0.85em; margin: 0 12px; white-space: nowrap;'>{text}</span>"
 
-def format_rel(row):
-    """Formats a standard 1st-level direct relationship."""
-    c_from, arrow, c_to = get_directed_details(row, row['Table 1'], row['Table 2'])
-    return f"**{row['Table 1']}**.`{c_from}` &nbsp; {arrow} &nbsp; **{row['Table 2']}**.`{c_to}`"
+def format_node(table, column, role="endpoint"):
+    """
+    Formats the table and column names with distinct typography.
+    - Endpoints (Source/Dest) adapt to the theme's default text color.
+    - Bridges use a distinct violet color.
+    - Table name is smaller; Column name is larger and bold.
+    """
+    color_css = "color: #8b5cf6;" if role == "bridge" else "color: var(--text-color);"
+    
+    table_html = f"<span style='font-size: 0.85em; opacity: 0.65;'>{table}</span>"
+    col_html = f"<strong style='font-size: 1.15em;'>{column}</strong>"
+    
+    return f"<span style='{color_css}'>{table_html}<span style='opacity:0.4; margin: 0 2px;'>.</span>{col_html}</span>"
+
+def render_card(html_content, card_type):
+    """Wraps the content in a beautiful, theme-adaptive transparent card."""
+    if card_type == "direct":
+        # Green tint (Emerald 500 at 8% opacity)
+        border_color = "#10b981"
+        bg_color = "rgba(16, 185, 129, 0.08)"
+    else:
+        # Blue tint (Blue 500 at 8% opacity)
+        border_color = "#3b82f6"
+        bg_color = "rgba(59, 130, 246, 0.08)"
+
+    card_html = f"""
+    <div style="
+        border-left: 4px solid {border_color}; 
+        background-color: {bg_color}; 
+        padding: 14px 18px; 
+        border-radius: 6px; 
+        margin-bottom: 12px; 
+        display: flex; 
+        align-items: center; 
+        flex-wrap: wrap;
+        font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+    ">
+        {html_content}
+    </div>
+    """
+    st.markdown(card_html, unsafe_allow_html=True)
 
 def show(filtered_df, schema, selected_tables):
     if filtered_df.empty:
@@ -47,65 +60,67 @@ def show(filtered_df, schema, selected_tables):
         return
 
     st.write("### Relationship Cards")
-    st.write("Direct relationships are shown in **Green**. 2nd-level bridge connections are shown in **Blue**.")
+    st.markdown("""
+    <div style='font-size: 0.9em; margin-bottom: 20px; opacity: 0.8;'>
+        Direct relationships are shown in <span style='color: #10b981; font-weight: bold;'>Green</span>. 
+        2nd-level connections are shown in <span style='color: #3b82f6; font-weight: bold;'>Blue</span>, 
+        with the bridge table highlighted in <span style='color: #8b5cf6; font-weight: bold;'>Violet</span>.
+    </div>
+    """, unsafe_allow_html=True)
     
-    # If exactly 2 tables are selected, we can split them into 1st-level and 2nd-level
+    # If exactly 2 tables are selected, process direct and 2nd-level connections
     if len(selected_tables) == 2:
         tA, tB = selected_tables[0], selected_tables[1]
         
         # 1. Direct Relationships (1st Level)
-        direct_mask = ((filtered_df['Table 1'] == tA) & (filtered_df['Table 2'] == tB)) | \
-                      ((filtered_df['Table 1'] == tB) & (filtered_df['Table 2'] == tA))
-        
+        direct_mask = (filtered_df['Table 1'] == tA) & (filtered_df['Table 2'] == tB)
         direct_df = filtered_df[direct_mask]
         
         if not direct_df.empty:
             st.markdown("#### Direct Relationships")
             for _, row in direct_df.iterrows():
-                st.success(format_rel(row))
+                nodeA = format_node(row['Table 1'], row['Table 1 Column'], role="endpoint")
+                nodeB = format_node(row['Table 2'], row['Table 2 Column'], role="endpoint")
+                arrow = get_arrow_html(row['Cardinality'])
+                render_card(f"{nodeA}{arrow}{nodeB}", "direct")
                 
         # 2. Indirect Relationships (2nd Level)
         indirect_df = filtered_df[~direct_mask]
-        # Identify the intermediate tables that are NOT the two we searched for
         bridge_tables = set(indirect_df['Table 1']).union(set(indirect_df['Table 2'])) - {tA, tB}
         
         if bridge_tables:
             st.markdown("#### 2nd-Level Connections (via Bridge Tables)")
             
             for tC in sorted(list(bridge_tables)):
-                # Find all rows linking Table A to Bridge Table C
-                ac_mask = ((indirect_df['Table 1'] == tA) & (indirect_df['Table 2'] == tC)) | \
-                          ((indirect_df['Table 1'] == tC) & (indirect_df['Table 2'] == tA))
-                ac_rows = indirect_df[ac_mask]
+                ac_rows = indirect_df[(indirect_df['Table 1'] == tA) & (indirect_df['Table 2'] == tC)]
+                bc_rows = indirect_df[(indirect_df['Table 1'] == tC) & (indirect_df['Table 2'] == tB)]
                 
-                # Find all rows linking Table B to Bridge Table C
-                bc_mask = ((indirect_df['Table 1'] == tB) & (indirect_df['Table 2'] == tC)) | \
-                          ((indirect_df['Table 1'] == tC) & (indirect_df['Table 2'] == tB))
-                bc_rows = indirect_df[bc_mask]
-                
-                # Pair every A->C link with every C->B link to build the chain
                 for _, ac_row in ac_rows.iterrows():
                     for _, bc_row in bc_rows.iterrows():
                         
-                        # Get the flow from Table A -> Bridge Table C
-                        colA, arrow1, colC1 = get_directed_details(ac_row, tA, tC)
-                        # Get the flow from Bridge Table C -> Table B
-                        colC2, arrow2, colB = get_directed_details(bc_row, tC, tB)
+                        # Format Source (Table A)
+                        nodeA = format_node(tA, ac_row['Table 1 Column'], role="endpoint")
+                        arrow1 = get_arrow_html(ac_row['Cardinality'])
                         
-                        # If the bridge uses the exact same column for both links, merge them.
-                        # Otherwise, display both columns in the middle.
+                        # Format Bridge (Table C)
+                        colC1, colC2 = ac_row['Table 2 Column'], bc_row['Table 1 Column']
                         if colC1 == colC2:
-                            bridge_str = f"**{tC}**.`{colC1}`"
+                            nodeC = format_node(tC, colC1, role="bridge")
                         else:
-                            bridge_str = f"**{tC}**.(`{colC1}` & `{colC2}`)"
+                            nodeC = format_node(tC, f"({colC1} & {colC2})", role="bridge")
                             
-                        # Build the final continuous string
-                        chain_str = f"**{tA}**.`{colA}` &nbsp; {arrow1} &nbsp; {bridge_str} &nbsp; {arrow2} &nbsp; **{tB}**.`{colB}`"
+                        # Format Destination (Table B)
+                        arrow2 = get_arrow_html(bc_row['Cardinality'])
+                        nodeB = format_node(tB, bc_row['Table 2 Column'], role="endpoint")
                         
-                        st.info(chain_str)
+                        # Render the continuous chain
+                        render_card(f"{nodeA}{arrow1}{nodeC}{arrow2}{nodeB}", "indirect")
                         
     else:
-        # If the user selected 0 or 1 table, render everything as 1st Level (Green)
+        # If 0 or 1 table is selected, render everything as Direct (Green)
         st.markdown("#### All Relationships")
         for _, row in filtered_df.iterrows():
-            st.success(format_rel(row))
+            nodeA = format_node(row['Table 1'], row['Table 1 Column'], role="endpoint")
+            nodeB = format_node(row['Table 2'], row['Table 2 Column'], role="endpoint")
+            arrow = get_arrow_html(row['Cardinality'])
+            render_card(f"{nodeA}{arrow}{nodeB}", "direct")
