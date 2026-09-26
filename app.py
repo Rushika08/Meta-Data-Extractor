@@ -15,33 +15,26 @@ def standardize_dataframe(df, t1, t2=None, bridges=None, schema=None):
         swap = False
         
         if t2 is None:
-            # Only 1 table selected: Ensure it is always in the Table 1 column
             if r['Table 2'] == t1:
                 swap = True
         else:
-            # 2 tables selected
-            # Direct: Force flow from t1 to t2
             if r['Table 1'] == t2 and r['Table 2'] == t1:
                 swap = True
-            # Indirect: Force flow from t1 -> Bridge, and Bridge -> t2
             elif bridges:
                 if r['Table 2'] == t1 and r['Table 1'] in bridges:
-                    swap = True  # Flips Bridge -> t1 into t1 -> Bridge
+                    swap = True  
                 elif r['Table 1'] == t2 and r['Table 2'] in bridges:
-                    swap = True  # Flips t2 -> Bridge into Bridge -> t2
+                    swap = True  
                     
         if swap:
-            # Swap Tables and Columns
             r['Table 1'], r['Table 2'] = r['Table 2'], r['Table 1']
             r['Table 1 Column'], r['Table 2 Column'] = r['Table 2 Column'], r['Table 1 Column']
             
-            # Reverse Cardinality
             if r['Cardinality'] == "One-to-Many (1:N)":
                 r['Cardinality'] = "Many-to-One (N:1)"
             elif r['Cardinality'] == "Many-to-One (N:1)":
                 r['Cardinality'] = "One-to-Many (1:N)"
             
-            # Recalculate PK status for the new target
             if schema:
                 t_target = r['Table 2']
                 c_target = r['Table 2 Column']
@@ -75,73 +68,117 @@ with st.expander("📝 Input DBML Code", expanded=('raw_df' not in st.session_st
 # --- 2. Global Filter Panel ---
 if 'raw_df' in st.session_state:
     st.divider()
-    st.subheader("🔎 Global Filters")
+    
     df = st.session_state['raw_df']
     schema = st.session_state['schema']
     
     all_tables = sorted(set(df['Table 1']).union(set(df['Table 2'])))
-    all_columns = sorted(set(df['Table 1 Column']).union(set(df['Table 2 Column'])))
     all_cards = sorted(df['Cardinality'].astype(str).unique())
     all_pk_statuses = sorted(df['Target is PK?'].astype(str).unique())
 
-    col1, col2, col3, col4 = st.columns(4)
-    
-    show_indirect = False
+    # Header Row: Split 50/50 to match st.columns(2) exactly below
+    head_col1, head_col2 = st.columns(2)
+    with head_col1:
+        st.subheader("🔎 Global Filters")
+    with head_col2:
+        show_indirect = st.checkbox("Include 2nd-Level Connections", value=False)
+
+    raw_bridges = set()
+    specific_bridges = []
+    excluded_tables = []
     intermediate_tables = set()
+
+    # ==================== ROW 1: Table Filter vs Specific Bridge ====================
+    row1_col1, row1_col2 = st.columns(2)
     
-    with col1:
+    with row1_col1:
         selected_tables = st.multiselect(
             "Filter by Table (Max 2):", 
             options=all_tables,
             help="Select 1 table to see its relations. Select 2 to see relationships between them."
         )[:2]
         
-        if len(selected_tables) == 2:
-            show_indirect = st.checkbox("Include 2nd-Level Connections")
+    with row1_col2:
+        if len(selected_tables) == 2 and show_indirect:
+            t1, t2 = selected_tables[0], selected_tables[1]
+            conn_t1 = set(df[df['Table 1'] == t1]['Table 2']).union(set(df[df['Table 2'] == t1]['Table 1']))
+            conn_t2 = set(df[df['Table 1'] == t2]['Table 2']).union(set(df[df['Table 2'] == t2]['Table 1']))
+            raw_bridges = conn_t1.intersection(conn_t2)
             
-            if show_indirect:
-                t1, t2 = selected_tables[0], selected_tables[1]
-                
-                # Pre-calculate raw bridge tables
-                conn_t1 = set(df[df['Table 1'] == t1]['Table 2']).union(set(df[df['Table 2'] == t1]['Table 1']))
-                conn_t2 = set(df[df['Table 1'] == t2]['Table 2']).union(set(df[df['Table 2'] == t2]['Table 1']))
-                raw_bridges = conn_t1.intersection(conn_t2)
-                
-                specific_bridge_placeholder = st.empty()
-                default_excl = ["systemuser"] if "systemuser" in all_tables else []
-                
-                excluded_tables = st.multiselect(
-                    "Exclude Bridge Tables:",
-                    options=all_tables,
-                    default=default_excl,
-                    help="ℹ️ Exclude noisy middle tables to prevent irrelevant 2nd-level connections."
-                )
-                
-                available_bridges = raw_bridges - set(excluded_tables)
-                
-                with specific_bridge_placeholder:
-                    specific_bridges = st.multiselect(
-                        "Specific Bridge Table(s):",
-                        options=sorted(list(available_bridges)),
-                        help="ℹ️ Optional: Focus on specific bridging tables."
-                    )
-                
-                intermediate_tables = set(specific_bridges) if specific_bridges else available_bridges
-            
-    with col2:
-        selected_columns = st.multiselect("Filter by Column (Any):", options=all_columns)
-    with col3:
-        selected_cards = st.multiselect("Filter by Cardinality:", options=all_cards)
-    with col4:
-        selected_pk = st.multiselect("Filter by Target is PK?:", options=all_pk_statuses)
+            specific_bridges = st.multiselect(
+                "Specific Bridge Table(s):",
+                options=sorted(list(raw_bridges)),
+                help="ℹ️ Optional: Focus on specific bridging tables."
+            )
+        else:
+            st.markdown("<div style='min-height: 80px;'></div>", unsafe_allow_html=True)
 
-    # --- Apply Logic ---
+    # Scoping available columns based on selection rules
+    if not selected_tables:
+        available_columns = sorted(set(df['Table 1 Column']).union(set(df['Table 2 Column'])))
+    elif len(selected_tables) == 2:
+        relevant_tables = set(selected_tables)
+        if show_indirect:
+            default_excl = ["systemuser"] if "systemuser" in all_tables else []
+            temp_bridges = raw_bridges - set(default_excl)
+            active_bridges = set(specific_bridges) if specific_bridges else temp_bridges
+            relevant_tables.update(active_bridges)
+            
+        scoped_cols = set()
+        for t in relevant_tables:
+            if schema and t in schema:
+                scoped_cols.update(schema[t].keys())
+        if not scoped_cols:
+            scoped_df = df[df['Table 1'].isin(relevant_tables) | df['Table 2'].isin(relevant_tables)]
+            scoped_cols = set(scoped_df['Table 1 Column']).union(set(scoped_df['Table 2 Column']))
+        available_columns = sorted(list(scoped_cols))
+    else:  # Exactly 1 table selected
+        t1 = selected_tables[0]
+        connected_tables = set(df[df['Table 1'] == t1]['Table 2']).union(set(df[df['Table 2'] == t1]['Table 1']))
+        relevant_tables = connected_tables.union({t1})
+        
+        scoped_cols = set()
+        for t in relevant_tables:
+            if schema and t in schema:
+                scoped_cols.update(schema[t].keys())
+        if not scoped_cols:
+            scoped_df = df[df['Table 1'].isin(relevant_tables) | df['Table 2'].isin(relevant_tables)]
+            scoped_cols = set(scoped_df['Table 1 Column']).union(set(scoped_df['Table 2 Column']))
+        available_columns = sorted(list(scoped_cols))
+
+    # ==================== ROW 2: Column Filter vs Exclude Bridge ====================
+    row2_col1, row2_col2 = st.columns(2)
+    
+    with row2_col1:
+        selected_columns = st.multiselect("Filter by Column (Any):", options=available_columns)
+        
+    with row2_col2:
+        if len(selected_tables) == 2 and show_indirect:
+            default_excl = ["systemuser"] if "systemuser" in all_tables else []
+            excluded_tables = st.multiselect(
+                "Exclude Bridge Table(s):",
+                options=all_tables,
+                default=default_excl,
+                help="ℹ️ Exclude noisy middle tables to prevent irrelevant 2nd-level connections."
+            )
+            
+            valid_bridges = raw_bridges - set(excluded_tables)
+            intermediate_tables = set(specific_bridges) if specific_bridges else valid_bridges
+
+    # ==================== ROW 3: Expandable Additional Filters ====================
+    with st.expander("⚙️ Additional Filters (Cardinality & Primary Key Status)", expanded=False):
+        add_col1, add_col2 = st.columns(2)
+        with add_col1:
+            selected_cards = st.multiselect("Filter by Cardinality:", options=all_cards)
+        with add_col2:
+            selected_pk = st.multiselect("Filter by Target is PK?:", options=all_pk_statuses)
+
+    # --- Apply Table & Bridge Filtering First ---
     filtered_df = df.copy()
     
     if len(selected_tables) == 1:
         t1 = selected_tables[0]
         filtered_df = filtered_df[(filtered_df['Table 1'] == t1) | (filtered_df['Table 2'] == t1)]
-        # Force standardize direction
         filtered_df = standardize_dataframe(filtered_df, t1, schema=schema)
         
     elif len(selected_tables) == 2:
@@ -161,15 +198,19 @@ if 'raw_df' in st.session_state:
         else:
             filtered_df = filtered_df[direct_mask]
             
-        # Force standardize direction (t1 -> Bridge -> t2)
         filtered_df = standardize_dataframe(filtered_df, t1, t2, bridges=intermediate_tables, schema=schema)
         
-    # Standard filters applied afterward
+    # --- Apply Column Filter Cleanly on Standardized Data ---
     if selected_columns:
-        filtered_df = filtered_df[filtered_df['Table 1 Column'].isin(selected_columns) | filtered_df['Table 2 Column'].isin(selected_columns)]
-    if selected_cards:
+        filtered_df = filtered_df[
+            filtered_df['Table 1 Column'].isin(selected_columns) | 
+            filtered_df['Table 2 Column'].isin(selected_columns)
+        ]
+        
+    # --- Apply Additional Filters ---
+    if 'selected_cards' in locals() and selected_cards:
         filtered_df = filtered_df[filtered_df['Cardinality'].isin(selected_cards)]
-    if selected_pk:
+    if 'selected_pk' in locals() and selected_pk:
         filtered_df = filtered_df[filtered_df['Target is PK?'].isin(selected_pk)]
 
     st.divider()

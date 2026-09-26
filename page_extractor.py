@@ -7,8 +7,18 @@ def show(filtered_df, total_rows):
     # Drop the filter columns just for the Streamlit display
     display_df = filtered_df.drop(columns=['Filter 1 (Tables)', 'Filter 2 (Columns)'], errors='ignore')
     
-    # Display the cleaner interactive table
-    st.dataframe(display_df, use_container_width=True, hide_index=True)
+    # Styling function to shade Table 1 (1st column) and Table 2 (3rd column)
+    def style_dataframe(df):
+        target_cols = ['Table 1', 'Table 2']
+        def color_cols(col):
+            if col.name in target_cols:
+                # Soft, theme-adaptive shading (works seamlessly in both Light and Dark mode)
+                return ['background-color: rgba(59, 130, 246, 0.08);'] * len(col)
+            return [''] * len(col)
+        return df.style.apply(color_cols, axis=0)
+
+    # Display the styled interactive table
+    st.dataframe(style_dataframe(display_df), use_container_width=True, hide_index=True)
     
     st.subheader("📥 Export")
     st.write("Download the current table (including your active filters) to Excel.")
